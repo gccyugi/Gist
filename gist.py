@@ -1,10 +1,11 @@
+#condig=utf-8
+
 import sublime
 import sublime_plugin
 import os
 import sys
 import json
 import base64
-import urllib2
 import subprocess
 import functools
 import webbrowser
@@ -183,6 +184,7 @@ def gistify_view(view, gist, gist_filename):
     view.settings().set('gist_url', gist["url"])
     view.settings().set('gist_filename', gist_filename)
     view.set_status("Gist", statusline_string)
+    # TODO: view.set_syntax_file
 
 def ungistify_view(view):
     view.settings().erase('gist_html_url')
@@ -210,31 +212,27 @@ def gist_title(gist):
     return gist.get('description') or gist.get('id')
 
 def api_request_native(url, data=None, method=None):
-    request = urllib2.Request(url)
-    if method:
-        request.get_method = lambda: method
-    request.add_header('Authorization', 'Basic ' + base64.urlsafe_b64encode(basic_auth_string()))
-    request.add_header('Accept', 'application/json')
-    request.add_header('Content-Type', 'application/json')
-
-    if data is not None:
-        request.add_data(data)
-
-    if settings.get('https_proxy'):
-        opener = urllib2.build_opener(urllib2.HTTPHandler(), urllib2.HTTPSHandler(),
-                                      urllib2.ProxyHandler({'https': settings.get('https_proxy')}))
-
-        urllib2.install_opener(opener)
-
+    import httplib
+    import urlparse
+    uri = urlparse.urlparse(url)
+    if uri.scheme == 'https':
+        conn = httplib.HTTPSConnection(uri.netloc)
+    else:
+        conn = httplib.HTTPConnection(uri.netloc)
+    method = (method or 'GET').upper()
+    headers = {
+        'Authorization': 'Basic ' + base64.urlsafe_b64encode(basic_auth_string()),
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+    }
     try:
-        with contextlib.closing(urllib2.urlopen(request)) as response:
-            if response.code == 204: # No Content
-                return None
-            else:
-                return json.loads(response.read())
-    except urllib2.HTTPError as err:
-        with contextlib.closing(err):
-            raise SimpleHTTPError(err.code, err.read())
+        conn.request(method, uri.path, data, headers)
+        res = conn.getresponse()
+        if res.status == '204':
+            return None
+        return json.loads(res.read())
+    except httplib.HTTPException:
+        raise SimpleHTTPError(0, 'httplib.HTTPException')
 
 @contextlib.contextmanager
 def named_tempfile():
